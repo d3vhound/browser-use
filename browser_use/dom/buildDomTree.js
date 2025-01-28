@@ -140,8 +140,7 @@
         // Base interactive elements and roles
         const interactiveElements = new Set([
             'a', 'button', 'details', 'embed', 'input', 'label',
-            'menu', 'menuitem', 'object', 'select', 'textarea', 'summary',
-            'iframe' // Add iframe as potentially interactive
+            'menu', 'menuitem', 'object', 'select', 'textarea', 'summary'
         ]);
 
         const interactiveRoles = new Set([
@@ -149,9 +148,7 @@
             'slider', 'tab', 'tabpanel', 'textbox', 'combobox', 'grid',
             'listbox', 'option', 'progressbar', 'scrollbar', 'searchbox',
             'switch', 'tree', 'treeitem', 'spinbutton', 'tooltip', 'a-button-inner', 'a-dropdown-button', 'click', 
-            'menuitemcheckbox', 'menuitemradio', 'a-button-text', 'button-text', 'button-icon', 'button-icon-only', 'button-text-icon-only', 'dropdown', 'combobox',
-            'iframe-button', 'iframe-link', 'iframe-input',
-            'frame', 'dialog', 'modal'
+            'menuitemcheckbox', 'menuitemradio', 'a-button-text', 'button-text', 'button-icon', 'button-icon-only', 'button-text-icon-only', 'dropdown', 'combobox'
         ]);
 
         const tagName = element.tagName.toLowerCase();
@@ -161,32 +158,6 @@
 
         // Add check for specific class
         const hasAddressInputClass = element.classList.contains('address-input__container__input');
-
-        // Check if element is inside an iframe
-        const isInIframe = element.ownerDocument !== window.document;
-        
-        // If in iframe, some elements might need special handling
-        if (isInIframe) {
-            // Check for iframe-specific interactive properties
-            const hasIframeInteraction = 
-                element.hasAttribute('data-iframe-interactive') ||
-                element.classList.contains('iframe-interactive') ||
-                element.getAttribute('data-iframe-clickable') === 'true';
-                
-            if (hasIframeInteraction) return true;
-        }
-
-        // Add to critical iframe detection
-        const isCriticalIframe = element.tagName === 'IFRAME' && (
-            element.src?.includes('accounts.google.com/gsi') ||
-            element.id?.includes('gsi_') ||
-            element.title?.toLowerCase().includes('sign in') ||
-            element.hasAttribute('allow') && element.getAttribute('allow').includes('identity-credentials-get')
-        );
-
-        if (isCriticalIframe) {
-            return true;
-        }
 
         // Basic role/attribute checks
         const hasInteractiveRole = hasAddressInputClass ||
@@ -280,59 +251,15 @@
 
     // Helper function to check if element is visible
     function isElementVisible(element) {
-        // Special handling for iframes
-        if (element.tagName === 'IFRAME') {
-            // Consider visible if it has non-zero width/height in its style
-            const style = window.getComputedStyle(element);
-            const rect = element.getBoundingClientRect();
-            
-            // Check if iframe has actual dimensions, even with negative margins
-            return (
-                (parseInt(style.width) > 0 || rect.width > 0) &&
-                (parseInt(style.height) > 0 || rect.height > 0) &&
-                style.display !== 'none' &&
-                style.visibility !== 'hidden'
-            );
-        }
-
-        // Check if element is in iframe
-        const isInIframe = element.ownerDocument !== window.document;
-        
-        if (isInIframe) {
-            // Get the parent iframe element
-            const iframe = element.ownerDocument.defaultView.frameElement;
-            
-            // Check if the iframe itself is visible
-            if (!isElementVisible(iframe)) {
-                return false;
-            }
-            
-            // Get iframe dimensions
-            const iframeRect = iframe.getBoundingClientRect();
-            if (iframeRect.width === 0 || iframeRect.height === 0) {
-                return false;
-            }
-        }
-        
         const style = window.getComputedStyle(element);
         return element.offsetWidth > 0 &&
             element.offsetHeight > 0 &&
             style.visibility !== 'hidden' &&
-            style.display !== 'none' &&
-            style.opacity !== '0';
+            style.display !== 'none';
     }
 
     // Helper function to check if element is the top element at its position
     function isTopElement(element) {
-        // Add special case for sign-in iframes
-        if (element.tagName === 'IFRAME' && (
-            element.src?.includes('accounts.google.com/gsi') ||
-            element.id?.includes('gsi_') ||
-            element.title?.toLowerCase().includes('sign in')
-        )) {
-            return true;
-        }
-
         // Find the correct document context and root element
         let doc = element.ownerDocument;
 
@@ -445,35 +372,6 @@
     function buildDomTree(node, parentIframe = null) {
         if (!node) return null;
 
-        // Add cross-origin iframe detection
-        if (node.tagName === 'IFRAME') {
-            try {
-                // This will throw if cross-origin
-                node.contentWindow.document;
-            } catch (e) {
-                // Return a node that marks this as an interactive iframe if it matches certain patterns
-                const isCriticalIframe = 
-                    node.src?.includes('accounts.google.com/gsi') || // Google Sign-In
-                    node.id?.includes('gsi_') || // Google Sign-In ID pattern
-                    node.title?.toLowerCase().includes('sign in'); // Sign-in related iframes
-
-                return {
-                    tagName: 'iframe',
-                    attributes: {
-                        src: node.src,
-                        id: node.id,
-                        title: node.title,
-                        crossOrigin: true
-                    },
-                    isInteractive: isCriticalIframe, // Mark as interactive if it's a critical iframe
-                    isVisible: true,
-                    isTopElement: true,
-                    isCrossOrigin: true,
-                    children: []
-                };
-            }
-        }
-
         // Special case for text nodes
         if (node.nodeType === Node.TEXT_NODE) {
             const textContent = node.textContent.trim();
@@ -553,21 +451,46 @@
         // Handle iframes
         if (node.tagName === 'IFRAME') {
             try {
-                const iframeDoc = node.contentDocument || node.contentWindow?.document;
-                // Add check for iframe readiness
-                if (iframeDoc && iframeDoc.readyState === 'complete' && iframeDoc.body) {
+                const iframeDoc = node.contentDocument || node.contentWindow.document;
+                if (iframeDoc) {
                     const iframeChildren = Array.from(iframeDoc.body.childNodes).map(child =>
                         buildDomTree(child, node)
                     );
                     nodeData.children.push(...iframeChildren);
-                } else {
-                    // Add a marker that this iframe wasn't ready
-                    nodeData.iframeNotLoaded = true;
                 }
             } catch (e) {
-                // Add more specific error handling
-                nodeData.iframeError = e.message;
-                console.warn('Unable to access iframe:', e.message);
+                console.warn('Unable to access iframe test:', node);
+                // Make the iframe itself interactive when we can't access its contents
+                nodeData.isInteractive = true;
+                nodeData.isVisible = true;
+                nodeData.isTopElement = true;
+                
+                // Special handling for Google Sign-in button
+                if (node.src?.includes('accounts.google.com/gsi/button') ||
+                    (node.id?.startsWith('gsi_') && node.title?.includes('Google'))) {
+                    nodeData.type = 'google-signin-button';
+                    // Try to extract button text from URL or title
+                    try {
+                        const urlParams = new URLSearchParams(node.src.split('?')[1]);
+                        if (urlParams.get('text') === 'continue_with') {
+                            nodeData.buttonText = 'Continue with Google';
+                        }
+                    } catch (err) {
+                        nodeData.buttonText = node.title || 'Sign in with Google';
+                    }
+                    
+                    // Add highlight index for the iframe itself
+                    nodeData.highlightIndex = highlightIndex++;
+                    if (doHighlightElements) {
+                        if (focusHighlightIndex >= 0) {
+                            if (focusHighlightIndex === nodeData.highlightIndex) {
+                                highlightElement(node, nodeData.highlightIndex, parentIframe);
+                            }
+                        } else {
+                            highlightElement(node, nodeData.highlightIndex, parentIframe);
+                        }
+                    }
+                }
             }
         } else {
             const children = Array.from(node.childNodes).map(child =>
