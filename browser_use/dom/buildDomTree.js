@@ -148,7 +148,9 @@
             'slider', 'tab', 'tabpanel', 'textbox', 'combobox', 'grid',
             'listbox', 'option', 'progressbar', 'scrollbar', 'searchbox',
             'switch', 'tree', 'treeitem', 'spinbutton', 'tooltip', 'a-button-inner', 'a-dropdown-button', 'click', 
-            'menuitemcheckbox', 'menuitemradio', 'a-button-text', 'button-text', 'button-icon', 'button-icon-only', 'button-text-icon-only', 'dropdown', 'combobox'
+            'menuitemcheckbox', 'menuitemradio', 'a-button-text', 'button-text', 'button-icon', 'button-icon-only', 'button-text-icon-only', 'dropdown', 'combobox',
+            'iframe-button', 'iframe-link', 'iframe-input',
+            'frame', 'dialog', 'modal'
         ]);
 
         const tagName = element.tagName.toLowerCase();
@@ -158,6 +160,20 @@
 
         // Add check for specific class
         const hasAddressInputClass = element.classList.contains('address-input__container__input');
+
+        // Check if element is inside an iframe
+        const isInIframe = element.ownerDocument !== window.document;
+        
+        // If in iframe, some elements might need special handling
+        if (isInIframe) {
+            // Check for iframe-specific interactive properties
+            const hasIframeInteraction = 
+                element.hasAttribute('data-iframe-interactive') ||
+                element.classList.contains('iframe-interactive') ||
+                element.getAttribute('data-iframe-clickable') === 'true';
+                
+            if (hasIframeInteraction) return true;
+        }
 
         // Basic role/attribute checks
         const hasInteractiveRole = hasAddressInputClass ||
@@ -251,11 +267,31 @@
 
     // Helper function to check if element is visible
     function isElementVisible(element) {
+        // Check if element is in iframe
+        const isInIframe = element.ownerDocument !== window.document;
+        
+        if (isInIframe) {
+            // Get the parent iframe element
+            const iframe = element.ownerDocument.defaultView.frameElement;
+            
+            // Check if the iframe itself is visible
+            if (!isElementVisible(iframe)) {
+                return false;
+            }
+            
+            // Get iframe dimensions
+            const iframeRect = iframe.getBoundingClientRect();
+            if (iframeRect.width === 0 || iframeRect.height === 0) {
+                return false;
+            }
+        }
+        
         const style = window.getComputedStyle(element);
         return element.offsetWidth > 0 &&
             element.offsetHeight > 0 &&
             style.visibility !== 'hidden' &&
-            style.display !== 'none';
+            style.display !== 'none' &&
+            style.opacity !== '0';
     }
 
     // Helper function to check if element is the top element at its position
@@ -372,6 +408,24 @@
     function buildDomTree(node, parentIframe = null) {
         if (!node) return null;
 
+        // Add cross-origin iframe detection
+        if (node.tagName === 'IFRAME') {
+            try {
+                // This will throw if cross-origin
+                node.contentWindow.document;
+            } catch (e) {
+                return {
+                    tagName: 'iframe',
+                    attributes: {
+                        src: node.src,
+                        crossOrigin: true
+                    },
+                    isCrossOrigin: true,
+                    children: []
+                };
+            }
+        }
+
         // Special case for text nodes
         if (node.nodeType === Node.TEXT_NODE) {
             const textContent = node.textContent.trim();
@@ -451,15 +505,21 @@
         // Handle iframes
         if (node.tagName === 'IFRAME') {
             try {
-                const iframeDoc = node.contentDocument || node.contentWindow.document;
-                if (iframeDoc) {
+                const iframeDoc = node.contentDocument || node.contentWindow?.document;
+                // Add check for iframe readiness
+                if (iframeDoc && iframeDoc.readyState === 'complete' && iframeDoc.body) {
                     const iframeChildren = Array.from(iframeDoc.body.childNodes).map(child =>
                         buildDomTree(child, node)
                     );
                     nodeData.children.push(...iframeChildren);
+                } else {
+                    // Add a marker that this iframe wasn't ready
+                    nodeData.iframeNotLoaded = true;
                 }
             } catch (e) {
-                console.warn('Unable to access iframe:', node);
+                // Add more specific error handling
+                nodeData.iframeError = e.message;
+                console.warn('Unable to access iframe:', e.message);
             }
         } else {
             const children = Array.from(node.childNodes).map(child =>
