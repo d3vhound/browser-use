@@ -140,7 +140,8 @@
         // Base interactive elements and roles
         const interactiveElements = new Set([
             'a', 'button', 'details', 'embed', 'input', 'label',
-            'menu', 'menuitem', 'object', 'select', 'textarea', 'summary'
+            'menu', 'menuitem', 'object', 'select', 'textarea', 'summary',
+            'iframe' // Add iframe as potentially interactive
         ]);
 
         const interactiveRoles = new Set([
@@ -173,6 +174,18 @@
                 element.getAttribute('data-iframe-clickable') === 'true';
                 
             if (hasIframeInteraction) return true;
+        }
+
+        // Add to critical iframe detection
+        const isCriticalIframe = element.tagName === 'IFRAME' && (
+            element.src?.includes('accounts.google.com/gsi') ||
+            element.id?.includes('gsi_') ||
+            element.title?.toLowerCase().includes('sign in') ||
+            element.hasAttribute('allow') && element.getAttribute('allow').includes('identity-credentials-get')
+        );
+
+        if (isCriticalIframe) {
+            return true;
         }
 
         // Basic role/attribute checks
@@ -267,6 +280,21 @@
 
     // Helper function to check if element is visible
     function isElementVisible(element) {
+        // Special handling for iframes
+        if (element.tagName === 'IFRAME') {
+            // Consider visible if it has non-zero width/height in its style
+            const style = window.getComputedStyle(element);
+            const rect = element.getBoundingClientRect();
+            
+            // Check if iframe has actual dimensions, even with negative margins
+            return (
+                (parseInt(style.width) > 0 || rect.width > 0) &&
+                (parseInt(style.height) > 0 || rect.height > 0) &&
+                style.display !== 'none' &&
+                style.visibility !== 'hidden'
+            );
+        }
+
         // Check if element is in iframe
         const isInIframe = element.ownerDocument !== window.document;
         
@@ -296,6 +324,15 @@
 
     // Helper function to check if element is the top element at its position
     function isTopElement(element) {
+        // Add special case for sign-in iframes
+        if (element.tagName === 'IFRAME' && (
+            element.src?.includes('accounts.google.com/gsi') ||
+            element.id?.includes('gsi_') ||
+            element.title?.toLowerCase().includes('sign in')
+        )) {
+            return true;
+        }
+
         // Find the correct document context and root element
         let doc = element.ownerDocument;
 
@@ -414,12 +451,23 @@
                 // This will throw if cross-origin
                 node.contentWindow.document;
             } catch (e) {
+                // Return a node that marks this as an interactive iframe if it matches certain patterns
+                const isCriticalIframe = 
+                    node.src?.includes('accounts.google.com/gsi') || // Google Sign-In
+                    node.id?.includes('gsi_') || // Google Sign-In ID pattern
+                    node.title?.toLowerCase().includes('sign in'); // Sign-in related iframes
+
                 return {
                     tagName: 'iframe',
                     attributes: {
                         src: node.src,
+                        id: node.id,
+                        title: node.title,
                         crossOrigin: true
                     },
+                    isInteractive: isCriticalIframe, // Mark as interactive if it's a critical iframe
+                    isVisible: true,
+                    isTopElement: true,
                     isCrossOrigin: true,
                     children: []
                 };
